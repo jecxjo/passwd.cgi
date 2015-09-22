@@ -1,5 +1,5 @@
 TODO
 ----
 
-- Sanitize user names
-- Sanitize email address in contact
+0001 Sanitize user names
+0002 Sanitize email address in contact
