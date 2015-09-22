@@ -3,3 +3,11 @@ TODO
 
 -0001 Sanitize user names
 -0002 Sanitize email address in contact
+0003 Change default directory to match file name
+0004 Sanitize password
+0005 Change in contact info should send a validation email
+0006 Site should have header and footer
+0007 Add support for time limits on reset requests, cron execution cleanup
+0008 Add License to source file
+0009 Add setup option to initialize system
+0010 Add blacklist for users
