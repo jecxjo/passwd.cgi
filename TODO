@@ -10,4 +10,5 @@ TODO
 0007 Add support for time limits on reset requests, cron execution cleanup
 0008 Add License to source file
 0009 Add setup option to initialize system
-0010 Add blacklist for users
+-0010 Add blacklist for users
+-0011 Clean up security issues in script

@@ -23,13 +23,20 @@
 
 
 # Global Vars
-URL="https://commentedcode.org/cgi-bin/passwd.sh"
+URL="https://example.com/cgi-bin/passwd.sh"
 TITLE="Change Password"
 EMAIL_FROM_NAME="Webmaster"
-EMAIL_FROM_ADDRESS="webmaster@commentedcode.org"
-USER_DB="/var/lib/pwchange/users.db"
-RESET_DB="/var/lib/pwchange/reset.db"
-RND_CMD=$(dd if=/dev/random bs=1 count=32 | base64 | sed 's|+||g' | sed 's|/||g' | sed 's|=||g' | sed 's| ||g')
+EMAIL_FROM_ADDRESS="webmaster@example.org"
+USER_DB="/var/lib/passwd.sh/users.db"
+RESET_DB="/var/lib/passwd.sh/reset.db"
+RND_CMD=$(/usr/bin/dd if=/dev/random bs=1 count=32 | \
+          /usr/bin/base64 | \
+          /usr/bin/sed 's|+||g' | \
+          /usr/bin/sed 's|/||g' | \
+          /usr/bin/sed 's|=||g' | \
+          /usr/bin/sed 's| ||g')
+
+BLACKLIST=(root http nobody)
 
 
 #################
@@ -48,11 +55,11 @@ function ResetPass () {
     echo "<b>Success:</b> Password changed successfully<br />"
 
     # Remove all instances of reset keys
+    /usr/bin/umask 026
     local tmp=$(mktemp /tmp/reset.XXXXXX)
     sed "/:${usr}$/d" "${RESET_DB}" > "${tmp}"
     mv "${tmp}" "${RESET_DB}"
-    chown http:http "${RESET_DB}"
-    chmod 640 "${RESET_DB}"
+    /usr/bin/chown http:http "${RESET_DB}"
   else
     echo "<b>Error:</b> Failed setting password<br />"
   fi
@@ -62,12 +69,12 @@ function ResetPass () {
 # 1->user, 2->key
 function ConfirmReset () {
   local usr=$(IsSaneUser "$1") key="$2"
-  grep -q "^${key}:${usr}" "${RESET_DB}"
+  /usr/bin/grep -q "^${key}:${usr}" "${RESET_DB}"
 
   # Check if reset code is valid
   if [ $? -eq 0 ]; then
     # Create form to enter new password
-    cat <<EOF
+    /usr/bin/cat <<EOF
 <form action="${URL}" method="POST">
   <fieldset>
     <legend>Reset Password</legend>
@@ -123,7 +130,7 @@ function ApplyNewPass () {
 # 1->user
 function GetAddress () {
   local usr=$(IsSaneUser "$1")
-  awk -v search="^${usr}:" '$0 ~ search{split($0,a,":"); print a[2];}' "${USER_DB}"
+  /usr/bin/awk -v search="^${usr}:" '$0 ~ search{split($0,a,":"); print a[2];}' "${USER_DB}"
 }
 
 # Create form to request Reset Email
@@ -131,7 +138,7 @@ function GetAddress () {
 function UserResetForm () {
   local user=$(IsSaneUser "$1")
 
-  cat <<EOF
+  /usr/bin/cat <<EOF
 <form action="${URL}" method="POST">
   <fieldset>
     <legend>Reset Password</legend>
@@ -153,13 +160,13 @@ function ApplyReset () {
     echo "<b>Error:</b> No User entered<br />"
     UserResetForm ""
   else
-    grep -q "^${usr}:" /etc/passwd
+    /usr/bin/grep -q "^${usr}:" /etc/passwd
 
     if [ $? -eq 1 ]; then
       echo "<b>Error:</b> User does not exist<br />"
       UserResetForm ""
     else
-      grep -q "^${usr}:" "${USER_DB}"
+      /usr/bin/grep -q "^${usr}:" "${USER_DB}"
 
       if [ $? -eq 1 ]; then
         echo "<b>Error:</b> User has no contact info<br />"
@@ -180,7 +187,7 @@ Thank you
 EOF)
         local mail="subject:${subject}\nfrom:${EMAIL_FROM_ADDRESS}\n\n${message}"
 
-        echo -e "${mail}" | sendmail -F "${EMAIL_FROM_NAME}" -f "${EMAIL_FROM_ADDRESS}" "${address}"
+        echo -e "${mail}" | /usr/bin/sendmail -F "${EMAIL_FROM_NAME}" -f "${EMAIL_FROM_ADDRESS}" "${address}"
 
         if [ $? -eq 0 ]; then
           echo "<b>Success:</b> Email sent<br />"
@@ -204,7 +211,7 @@ function UserPassForm () {
   local user=$(IsSaneUser "$1")
   local old_pass=$2
 
-  cat <<EOF
+  /usr/bin/cat <<EOF
 <form action="${URL}" method="POST">
   <fieldset>
     <legend>Change Password</legend>
@@ -224,9 +231,9 @@ EOF
 function SetPass () {
   local user=$(IsSaneUser "$1") pass=$2 new=$3
 
-  out=$(expect -c '
+  out=$(/usr/bin/expect -c '
     set timeout 10
-    spawn su -c passwd - '"${user}"'
+    spawn /usr/bin/su -c /usr/bin/passwd - '"${user}"'
     expect "Password:" { send '\""${pass}\r\""' }
     expect "current) UNIX password:" { send '"\"${pass}\r\""' }
     expect "new UNIX password:" { send '"\"${new}\r\""' }
@@ -236,7 +243,7 @@ function SetPass () {
       default { exit 1 }
     }')
 
-  echo "${out}" | grep -q "successfully"
+  echo "${out}" | /usr/bin/grep -q "successfully"
 
   if [ $? -eq 0 ]; then
     echo "<b>Success:</b> Password Changed<br />"
@@ -266,7 +273,7 @@ function ApplyPass () {
     echo "<b>Error:</b> No New Password<br />"
     UserPassForm "${usr}" "${old}"
   else
-    grep -q "^${usr}:" /etc/passwd
+    /usr/bin/grep -q "^${usr}:" /etc/passwd
 
     if [ $? -eq 1 ]; then
       echo "<b>Error:</b> User does not exist<br />"
@@ -289,7 +296,7 @@ function ApplyPass () {
 function UserContactForm () {
   local user=$(IsSaneUser "$1") email=$(IsSaneEmail "$2")
 
-  cat <<EOF
+  /usr/bin/cat <<EOF
 <form action="${URL}" method="POST">
   <fieldset>
     <legend>Change Contact Info</legend>
@@ -313,9 +320,9 @@ function SetContact () {
   local str="${usr}:${email}"
 
   # Touch file as user, requires correct password
-  local out=$(expect -c '
+  local out=$(/usr/bin/expect -c '
     set timeout 10
-    spawn -noecho su -c "touch '"${f}"'" - '"${usr}"'
+    spawn -noecho /usr/bin/su -c "/usr/bin/touch '"${f}"'" - '"${usr}"'
     expect "Password:" { send '\""${pass}\r\""' }
     expect eof
     catch wait result
@@ -324,18 +331,18 @@ function SetContact () {
   # if su worked, user/pass was valid
   if [ -e "${f}" ]; then
     # Remove old contact info and add new
-    TMP=$(mktemp /tmp/contact.XXXXXX)
-    sed "/^${usr}:/d" "${USER_DB}" > "${TMP}"
+    /usr/bin/umask 026
+    TMP=$(/usr/bin/mktemp /tmp/contact.XXXXXX)
+    /usr/bin/sed "/^${usr}:/d" "${USER_DB}" > "${TMP}"
     echo "${usr}:${email}" >> "${TMP}"
     mv "${TMP}" "${USER_DB}"
-    chown http:http "${USER_DB}"
-    chmod 640 "${USER_DB}"
+    /usr/bin/chown http:http "${USER_DB}"
     echo "<b>Success:</b> Contact Info Updated<br />"
 
     # cleanup touched file
-    local out=$(expect -c '
+    local out=$(/usr/bin/expect -c '
       set timeout 10
-      spawn -noecho su -c "rm '"${f}"'" - '"${usr}"'
+      spawn -noecho /usr/bin/su -c "/usr/bin/rm '"${f}"'" - '"${usr}"'
       expect "Password:" { send '\""${pass}\r\""' }
       expect eof
       catch wait result
@@ -518,20 +525,31 @@ cgi_getvars BOTH ALL
 # Checks if username is a sane username
 # 1->user
 function IsSaneUser () {
-  echo "$1" | grep "^[0-9A-Za-z-]\+$"
+  local user=$(echo "$1" | /usr/bin/grep "^[0-9A-Za-z-]\+$")
+  if [ ! -z "${user}" ]; then
+    local count = 0
+    while [ "x${BLACKLIST[count]}" != "x" ]
+    do
+      if [ "${user}" == "${BLACKLIST[count]}" ]; then
+        return
+      fi
+      count=$(( ${count} + 1 ))
+    done
+  fi
+  echo "${user}"
 }
 
 # Checks if email is sane
 # 1->email
 function IsSaneEmail () {
-  echo "$1" | grep -E -o "\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,6}\b"
+  echo "$1" | /usr/bin/grep -E -o "\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,6}\b"
 }
 
 ###################
 # HTML Generation #
 ###################
 function Header() {
-  cat <<EOF
+  /usr/bin/cat <<EOF
 <head>
   <title>${TITLE}</title>
   <style>
