@@ -31,12 +31,6 @@ USER_DB="/var/lib/pwchange/users.db"
 RESET_DB="/var/lib/pwchange/reset.db"
 RND_CMD=$(dd if=/dev/random bs=1 count=32 | base64 | sed 's|+||g' | sed 's|/||g' | sed 's|=||g' | sed 's| ||g')
 
-# Misc Functions
-function Header() {
-  echo "<head>"
-  echo "  <title>${TITLE}</title>"
-  echo "</head>"
-}
 
 #################
 # Confirm Reset #
@@ -73,16 +67,19 @@ function ConfirmReset () {
   # Check if reset code is valid
   if [ $? -eq 0 ]; then
     # Create form to enter new password
-    echo "<b>User:</b> ${usr}<br/><b>Key:</b> ${key}<br />"
-    echo "<h2>Reset Password</h2>"
-    echo "<form action=\"${URL}\" method=\"POST\">"
-    echo "  <input type=\"hidden\" name=\"cmd\" id=\"cmd\" value=\"resetpass\" />"
-    echo "  <input type=\"hidden\" name=\"key\" id=\"key\" value=\"${key}\" />"
-    echo "  <input type=\"hidden\" name=\"user\" id=\"user\" value=\"${usr}\" />"
-    echo "  Password: <input type=\"password\" name=\"pass\" id=\"pass\" /><br />"
-    echo "  Confirm: <input type=\"password\" name=\"passcfm\" id=\"passcfm\" /><br />"
-    echo "  <input type=\"submit\" value=\"Submit\" />"
-    echo "</form>"
+    cat <<EOF
+<form action="${URL}" method="POST">
+  <fieldset>
+    <legend>Reset Password</legend>
+    <input type="hidden" name="cmd" id="cmd" value="resetpass" />
+    <input type="hidden" name="key" id="key" value="${key}" />
+    <input type="hidden" name="user" id="user" value="${usr}" />
+    <p><label class="field" for="pass">Password:</label><input type="password" name="pass" id="pass" class="textbox-300" /></p>
+    <p><label class="field" for="passcfm">Confirm:</label><input type="password" name="passcfm" id="passcfm" class="textbox-300" /></p>
+    <input type="submit" value="Submit" />
+  </fieldset>
+</form>
+EOF
   else
     echo "<b>Error:</b> Reset code is not valid<br />"
   fi
@@ -134,12 +131,16 @@ function GetAddress () {
 function UserResetForm () {
   local user=$1
 
-  echo "<h2>Reset Password</h2>"
-  echo "<form action=\"${URL}\" method=\"POST\">"
-  echo "  <input type=\"hidden\" name=\"cmd\" id=\"cmd\" value=\"setreset\" />"
-  echo "  User: <input type=\"text\" name=\"user\" id=\"user\" value=\"${user}\" /><br />"
-  echo "  <input type=\"submit\" value=\"Submit\" />"
-  echo "</form>"
+  cat <<EOF
+<form action="${URL}" method="POST">
+  <fieldset>
+    <legend>Reset Password</legend>
+    <input type="hidden" name="cmd" id="cmd" value="setreset" />
+    <p><label class="field" for="user">User:</label><input type="text" name="user" id="user" class="textbox-300" value="${user}" /></p>
+    <input type="submit" value="Submit" />
+  </fieldset>
+</form>
+EOF
 }
 
 # Create Email, send it and then generate HTML status
@@ -203,15 +204,19 @@ function UserPassForm () {
   local user=$1
   local old_pass=$2
 
-  echo "<h2>Change Password</h2>"
-  echo "<form action=\"${URL}\" method=\"POST\">"
-  echo "  <input type=\"hidden\" name=\"cmd\" id=\"cmd\" value=\"setpass\" />"
-  echo "  User: <input type=\"text\" name=\"user\" id=\"user\" value=\"${user}\" /><br />"
-  echo "  Old Password: <input type=\"password\" name=\"oldpass\" id=\"oldpass\" value=\"${old_pass}\" /><br />"
-  echo "  New Password: <input type=\"password\" name=\"pass\" id=\"pass\" /><br />"
-  echo "  Confirm Password: <input type=\"password\" name=\"passcfm\" id=\"passcfm\" /><br />"
-  echo "  <input type=\"submit\" value=\"Submit\" />"
-  echo "</form>"
+  cat <<EOF
+<form action="${URL}" method="POST">
+  <fieldset>
+    <legend>Change Password</legend>
+    <input type="hidden" name="cmd" id="cmd" value="setpass" />
+    <p><label class="field" for="user">User:</label> <input type="text" name="user" id="user" value="${user}" /></p>
+    <p><label class="field" for="oldpass">Old Password:</label><input type="password" name="oldpass" id="oldpass" value="${old_pass}" /></p>
+    <p><label class="field" for="pass">New Password:</label> <input type="password" name="pass" id="pass" /></p>
+    <p><label class="field" for="passcfm">Confirm Password:</label> <input type="password" name="passcfm" id="passcfm" /></p>
+    <input type="submit" value="Submit" />
+  </fieldset>
+</form>
+EOF
 }
 
 # Apply new password to user and generate HTML status
@@ -285,14 +290,18 @@ function UserContactForm () {
   local user=$1
   local email=$2
 
-  echo "<h2>Change Contact Info</h2>"
-  echo "<form action=\"${URL}\" method=\"POST\">"
-  echo "  <input type=\"hidden\" name=\"cmd\" id=\"cmd\" value=\"setcontact\" />"
-  echo "  User: <input type=\"text\" name=\"user\" id=\"user\" value=\"${user}\" /><br />"
-  echo "  Password: <input type=\"password\" name=\"pass\" id=\"pass\"  /><br />"
-  echo "  Email: <input type=\"email\" name=\"email\" id=\"email\" value=\"${email}\" /><br />"
-  echo "  <input type=\"submit\" value=\"Submit\" />"
-  echo "</form>"
+  cat <<EOF
+<form action="${URL}" method="POST">
+  <fieldset>
+    <legend>Change Contact Info</legend>
+    <input type="hidden" name="cmd" id="cmd" value="setcontact" />
+    <p><label class="field" for="user">User:</label><input type="text" name="user" id="user" value="${user}" /></p>
+    <p><label class="field" for="user">Password:</label><input type="password" name="pass" id="pass"  /></p>
+    <p><label class="field" for="user">Email:</label><input type="email" name="email" id="email" value="${email}" /></p>
+    <input type="submit" value="Submit" />
+  </fieldset>
+</form>
+EOF
 }
 
 # Apply new contact info and generate HTML status
@@ -507,6 +516,36 @@ cgi_getvars BOTH ALL
 ###################
 # HTML Generation #
 ###################
+function Header() {
+  cat <<EOF
+<head>
+  <title>${TITLE}</title>
+  <style>
+    fieldset {
+      width: 500px;
+    }
+    legend {
+      font-size: 20px;
+    }
+    label.field {
+      text-align: right;
+      width: 200px;
+      float: left;
+      font-weight: bold;
+    }
+    label.textbox-300 {
+      width: 300px;
+      float: left;
+    }
+    fieldset p {
+      clear: bloth;
+      padding: 5px;
+    }
+  </style>
+</head>
+EOF
+}
+
 echo Content-type: text/html
 echo ""
 
