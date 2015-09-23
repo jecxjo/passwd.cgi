@@ -26,7 +26,7 @@
 URL="https://example.com/cgi-bin/passwd.sh"
 TITLE="Change Password"
 EMAIL_FROM_NAME="Webmaster"
-EMAIL_FROM_ADDRESS="webmaster@example.org"
+EMAIL_FROM_ADDRESS="webmaster@example.com"
 USER_DB="/var/lib/passwd.sh/users.db"
 RESET_DB="/var/lib/passwd.sh/reset.db"
 RND_CMD=$(/usr/bin/dd if=/dev/random bs=1 count=32 | \
@@ -48,7 +48,7 @@ BLACKLIST=(root http nobody)
 function ResetPass () {
   local usr=$(IsSaneUser "$1") pass="$2"
   # write new user:pass to system
-  echo "${usr}:${pass}" | sudo chpasswd
+  echo "${usr}:${pass}" | /usr/bin/sudo /usr/bin/chpasswd
 
   # Check if password change was successful
   if [ $? -eq 0 ]; then
@@ -231,24 +231,14 @@ EOF
 function SetPass () {
   local user=$(IsSaneUser "$1") pass=$2 new=$3
 
-  out=$(/usr/bin/expect -c '
-    set timeout 10
-    spawn /usr/bin/su -c /usr/bin/passwd - '"${user}"'
-    expect "Password:" { send '\""${pass}\r\""' }
-    expect "current) UNIX password:" { send '"\"${pass}\r\""' }
-    expect "new UNIX password:" { send '"\"${new}\r\""' }
-    expect "new UNIX password:" { send '"\"${new}\r\""' }
-    expect {
-      "successfully" { exit 0 }
-      default { exit 1 }
-    }')
+  local out=$(echo -e "${pass}\n${pass}\n${new}\n${new}" | /usr/bin/su -c 'if /usr/bin/passwd; then echo "SUCCESS"; fi ' "${user}")
 
-  echo "${out}" | /usr/bin/grep -q "successfully"
+  echo "${out}" | /usr/bin/grep -q "SUCCESS"
 
   if [ $? -eq 0 ]; then
     echo "<b>Success:</b> Password Changed<br />"
   else
-    echo "<b>Error:</b> Failed changing password<br />"
+    echo "<b>Error:</b> Failed changing password[${out}]<br />"
   fi
 }
 
@@ -320,13 +310,7 @@ function SetContact () {
   local str="${usr}:${email}"
 
   # Touch file as user, requires correct password
-  local out=$(/usr/bin/expect -c '
-    set timeout 10
-    spawn -noecho /usr/bin/su -c "/usr/bin/touch '"${f}"'" - '"${usr}"'
-    expect "Password:" { send '\""${pass}\r\""' }
-    expect eof
-    catch wait result
-    exit [lindex $result 3]')
+  local out=$(echo -e "${pass}\n" | /usr/bin/su -c "/usr/bin/touch \"${f}\"" - "${usr}")
 
   # if su worked, user/pass was valid
   if [ -e "${f}" ]; then
@@ -387,32 +371,54 @@ local usr=$(IsSaneUser "$1") pass="$2" email=$(IsSaneEmail "$3")
 function Body () {
   echo "<body>"
 
-  case "$1" in
+  cgi_getvars BOTH cmd
+  case "${cmd}" in
     resetpass)
+      cgi_getvars BOTH user
+      cgi_getvars BOTH key
+      cgi_getvars BOTH pass
+      cgi_getvars BOTH passcfm
       ApplyNewPass "${user}" "${key}" "${pass}" "${passcfm}"
       ;;
     cfmreset)
+      cgi_getvars BOTH user
+      cgi_getvars BOTH key
       ConfirmReset "${user}" "${key}"
       ;;
     setreset)
+      cgi_getvars BOTH user
       ApplyReset "${user}"
       ;;
     setpass)
+      cgi_getvars BOTH user
+      cgi_getvars BOTH oldpass
+      cgi_getvars BOTH pass
+      cgi_getvars BOTH passcfm
       ApplyPass "${user}" "${oldpass}" "${pass}" "${passcfm}"
       ;;
     setcontact)
+      cgi_getvars BOTH user
+      cgi_getvars BOTH pass
+      cgi_getvars BOTH email
       ApplyContact "${user}" "${pass}" "${email}"
       ;;
     resetform)
+      cgi_getvars BOTH user
       UserResetForm "${user}"
       ;;
     contactform)
+      cgi_getvars BOTH user
+      cgi_getvars BOTH email
       UserContactForm "${user}" "${email}"
       ;;
     passform)
+      cgi_getvars BOTH user
+      cgi_getvars BOTH oldpass
       UserPassForm "${user}" "${oldpass}"
       ;;
     *)
+      cgi_getvars BOTH user
+      cgi_getvars BOTH oldpass
       UserPassForm "${user}" "${oldpass}"
       ;;
   esac
@@ -516,7 +522,7 @@ function cgi_getvars()
   return
 }
 
-cgi_getvars BOTH ALL
+#cgi_getvars BOTH ALL
 # END of bash_cgi
 
 ################
@@ -544,6 +550,31 @@ function IsSaneUser () {
 function IsSaneEmail () {
   echo "$1" | /usr/bin/grep -E -o "\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,6}\b"
 }
+
+#################
+# CLI Functions #
+#################
+function PrintUsage () {
+  /usr/bin/cat <<EOF
+usage: passwd.sh [OPTION]
+
+  -h | --help  Print this output
+  -c | --cron  Trigger cleanup of expired entries
+
+This application is a CGI script that generates a Unix account password
+manager. The script should be executed as a non-root user and the user
+should be given sudo access to /usr/bin/chpasswd.
+
+To allow password reset requests to expire, this script should be run as
+a cron job with the -c flag.
+
+EOF
+}
+
+function CronMode () {
+ echo "TODO: Create Cron Mode"
+}
+
 
 ###################
 # HTML Generation #
@@ -578,12 +609,42 @@ function Header() {
 EOF
 }
 
-echo Content-type: text/html
-echo ""
+# Cron mode, trigger cleanup of reset requests
+CRON_MODE=0
 
-echo "<!DOCTYPE html>"
-echo "<html>"
-Header
-Body "${cmd}"
-echo "</html>"
+# Print usage and quit
+HELP_MODE=0
+
+while [[ $# > 1 ]]
+do
+  local key = $1
+
+  case ${key} in
+    -c|--cron)
+      CRON_MODE=1
+      ;;
+    -h|--help)
+      HELP_MODE=1
+      ;;
+    *)
+      ;;
+  esac
+  shift # next arg
+done
+
+if [ ${HELP_MODE} -eq 1 ]; then
+  PrintUsage
+elif [ ${CRON_MODE} -eq 1 ]; then
+  CronMode
+else
+  /usr/bin/cat <<EOF
+Content-type: text/html
+
+<!DOCTYPE html>
+<html>
+$(Header)
+$(Body)
+</html>
+EOF
+fi
 
