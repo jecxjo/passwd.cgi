@@ -324,13 +324,7 @@ function SetContact () {
     echo "<b>Success:</b> Contact Info Updated<br />"
 
     # cleanup touched file
-    local out=$(/usr/bin/expect -c '
-      set timeout 10
-      spawn -noecho /usr/bin/su -c "/usr/bin/rm '"${f}"'" - '"${usr}"'
-      expect "Password:" { send '\""${pass}\r\""' }
-      expect eof
-      catch wait result
-      exit [lindex $result 3]')
+    local out=$(echo -e "${pass}\n" | /usr/bin/su -c "/usr/bin/rm \"${f}\"" - "${usr}")
   else
     echo "<b>Error:</b> Failed to update DB, No file[${f}]<br />"
   fi
