@@ -390,7 +390,10 @@ local usr=$(IsSaneUser "$1") pass="$2" email=$(IsSaneEmail "$3")
 # Switch on URL argument "cmd" to generate correct page
 # $1->cmd
 function Body () {
-  echo "<body>"
+  /usr/bin/cat <<EOF
+<body>
+  <h1>${TITLE}</h1>
+EOF
 
   cgi_getvars BOTH cmd
   case "${cmd}" in
@@ -444,12 +447,15 @@ function Body () {
       ;;
   esac
 
-  echo "<br />"
-  echo "<a href=\"/cgi-bin/passwd.sh?cmd=passform\">Password</a>"
-  echo "<a href=\"/cgi-bin/passwd.sh?cmd=contactform\">Contact</a>"
-  echo "<a href=\"/cgi-bin/passwd.sh?cmd=resetform\">Reset Password</a>"
-
-  echo "</body>"
+  /usr/bin/cat <<EOF
+  <br />
+  <a href="${URL}?cmd=passform">Password</a>
+  <a href="${URL}?cmd=contactform">Contact</a>
+  <a href="${URL}?cmd=resetform">Reset Password</a>
+  <br />
+  <p>Contact <a href="mailto:${EMAIL_FROM_ADDRESS}">${EMAIL_FROM_NAME}</a> if you have any issues</p>
+</body>
+EOF
 }
 
 # START bash_cgi
