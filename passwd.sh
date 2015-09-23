@@ -51,12 +51,13 @@
 
 # Global Vars
 URL="https://example.com/cgi-bin/passwd.sh"
-TITLE="Change Password"
+TITLE="Account Management"
 EMAIL_FROM_NAME="Webmaster"
 EMAIL_FROM_ADDRESS="webmaster@example.com"
 USER_DB="/var/lib/passwd.sh/users.db"
 RESET_DB="/var/lib/passwd.sh/reset.db"
-RND_CMD=$(/usr/bin/dd if=/dev/random bs=1 count=32 | \
+EXPIRATION=3600 # 1 hour in seconds
+RND_CMD=$(/usr/bin/dd if=/dev/random bs=1 count=32 2>/dev/null | \
           /usr/bin/base64 | \
           /usr/bin/sed 's|+||g' | \
           /usr/bin/sed 's|/||g' | \
@@ -82,11 +83,10 @@ function ResetPass () {
     echo "<b>Success:</b> Password changed successfully<br />"
 
     # Remove all instances of reset keys
-    /usr/bin/umask 026
+    umask 026
     local tmp=$(mktemp /tmp/reset.XXXXXX)
-    sed "/:${usr}$/d" "${RESET_DB}" > "${tmp}"
+    sed "/:${usr}:/d" "${RESET_DB}" > "${tmp}"
     mv "${tmp}" "${RESET_DB}"
-    /usr/bin/chown http:http "${RESET_DB}"
   else
     echo "<b>Error:</b> Failed setting password<br />"
   fi
@@ -219,7 +219,9 @@ EOF)
         if [ $? -eq 0 ]; then
           echo "<b>Success:</b> Email sent<br />"
           # Write key to database
-          echo "${key}:${usr}" >> "${RESET_DB}"
+          local now=$(date +%s)
+          local timeout=$(( ${now} + ${EXPIRATION} ))
+          echo "${key}:${usr}:$timeout" >> "${RESET_DB}"
         else
           echo "<b>Error:</b> Failed sending email<br />"
         fi
@@ -342,12 +344,11 @@ function SetContact () {
   # if su worked, user/pass was valid
   if [ -e "${f}" ]; then
     # Remove old contact info and add new
-    /usr/bin/umask 026
+    umask 026
     TMP=$(/usr/bin/mktemp /tmp/contact.XXXXXX)
     /usr/bin/sed "/^${usr}:/d" "${USER_DB}" > "${TMP}"
     echo "${usr}:${email}" >> "${TMP}"
     mv "${TMP}" "${USER_DB}"
-    /usr/bin/chown http:http "${USER_DB}"
     echo "<b>Success:</b> Contact Info Updated<br />"
 
     # cleanup touched file
@@ -599,7 +600,20 @@ EOF
 }
 
 function CronMode () {
- echo "TODO: Create Cron Mode"
+  umask 026
+  local file=$(/usr/bin/mktemp /tmp/reset.XXXXXX)
+
+  /usr/bin/awk -v now=$(/usr/bin/date +%s) '{
+    split($0,a,":");
+    if (a[3] != "") {
+      if (a[3] > now) {
+        print $0;
+      }
+    }
+  }' "${RESET_DB}" > "${file}"
+
+  cp --no-preserve=mode,ownership "${file}" "${RESET_DB}"
+  rm "${file}"
 }
 
 
@@ -642,11 +656,9 @@ CRON_MODE=0
 # Print usage and quit
 HELP_MODE=0
 
-while [[ $# > 1 ]]
+while [[ $# > 0 ]]
 do
-  local key = $1
-
-  case ${key} in
+  case $1 in
     -c|--cron)
       CRON_MODE=1
       ;;
