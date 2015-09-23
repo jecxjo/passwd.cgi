@@ -1,5 +1,30 @@
 #!/bin/bash - 
 #===============================================================================
+# Copyright (c) 2015 Jeff Parent
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without modification,
+# are permitted provided that the following conditions are met:
+#
+#  * Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#  * Neither the name of the passwd.sh authors nor the names of its contributors
+#    may be used to endorse or promote products derived from this software without
+#    specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+# ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+# ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 #          FILE: passwd.sh
 #
@@ -14,29 +39,34 @@
 #        AUTHOR: jecxjo (jeff@commentedcode.org)
 #  ORGANIZATION:
 #       CREATED: 09/20/15 13:28
-#      REVISION: 0.0.3
+#      REVISION: 0.0.5
 #
-#     CHANGELOG: 0.0.3 - Moved bash_cgi code to file
+#     CHANGELOG: 0.0.5 - Cron support and reset expirations
+#                0.0.4 - Security holes and cleanup
+#                0.0.3 - Moved bash_cgi code to file
 #                0.0.2 - Clean up
 #                0.0.1 - Initial version
+#
 #===============================================================================
 
 
 # Global Vars
-URL="https://commentedcode.org/cgi-bin/passwd.sh"
-TITLE="Change Password"
+URL="https://example.com/cgi-bin/passwd.sh"
+TITLE="Account Management"
 EMAIL_FROM_NAME="Webmaster"
-EMAIL_FROM_ADDRESS="webmaster@commentedcode.org"
-USER_DB="/var/lib/pwchange/users.db"
-RESET_DB="/var/lib/pwchange/reset.db"
-RND_CMD=$(dd if=/dev/random bs=1 count=32 | base64 | sed 's|+||g' | sed 's|/||g' | sed 's|=||g' | sed 's| ||g')
+EMAIL_FROM_ADDRESS="webmaster@example.com"
+USER_DB="/var/lib/passwd.sh/users.db"
+RESET_DB="/var/lib/passwd.sh/reset.db"
+EXPIRATION=3600 # 1 hour in seconds
+RND_CMD=$(/usr/bin/dd if=/dev/random bs=1 count=32 2>/dev/null | \
+          /usr/bin/base64 | \
+          /usr/bin/sed 's|+||g' | \
+          /usr/bin/sed 's|/||g' | \
+          /usr/bin/sed 's|=||g' | \
+          /usr/bin/sed 's| ||g')
 
-# Misc Functions
-function Header() {
-  echo "<head>"
-  echo "  <title>${TITLE}</title>"
-  echo "</head>"
-}
+BLACKLIST=(root http nobody)
+
 
 #################
 # Confirm Reset #
@@ -45,20 +75,19 @@ function Header() {
 # Apply new password and output HTML status
 # 1->user, 2->pass
 function ResetPass () {
-  local usr="$1" pass="$2"
+  local usr=$(IsSaneUser "$1") pass="$2"
   # write new user:pass to system
-  echo "${usr}:${pass}" | sudo chpasswd
+  echo "${usr}:${pass}" | /usr/bin/sudo /usr/bin/chpasswd
 
   # Check if password change was successful
   if [ $? -eq 0 ]; then
     echo "<b>Success:</b> Password changed successfully<br />"
 
     # Remove all instances of reset keys
+    umask 026
     local tmp=$(mktemp /tmp/reset.XXXXXX)
-    sed "/:${usr}$/d" "${RESET_DB}" > "${tmp}"
+    sed "/:${usr}:/d" "${RESET_DB}" > "${tmp}"
     mv "${tmp}" "${RESET_DB}"
-    chown http:http "${RESET_DB}"
-    chmod 640 "${RESET_DB}"
   else
     echo "<b>Error:</b> Failed setting password<br />"
   fi
@@ -67,22 +96,25 @@ function ResetPass () {
 # Check if Key:User DB and return HTML Form to reset
 # 1->user, 2->key
 function ConfirmReset () {
-  local usr="$1" key="$2"
-  grep -q "^${key}:${usr}" "${RESET_DB}"
+  local usr=$(IsSaneUser "$1") key="$2"
+  /usr/bin/grep -q "^${key}:${usr}" "${RESET_DB}"
 
   # Check if reset code is valid
   if [ $? -eq 0 ]; then
     # Create form to enter new password
-    echo "<b>User:</b> ${usr}<br/><b>Key:</b> ${key}<br />"
-    echo "<h2>Reset Password</h2>"
-    echo "<form action=\"${URL}\" method=\"POST\">"
-    echo "  <input type=\"hidden\" name=\"cmd\" id=\"cmd\" value=\"resetpass\" />"
-    echo "  <input type=\"hidden\" name=\"key\" id=\"key\" value=\"${key}\" />"
-    echo "  <input type=\"hidden\" name=\"user\" id=\"user\" value=\"${usr}\" />"
-    echo "  Password: <input type=\"password\" name=\"pass\" id=\"pass\" /><br />"
-    echo "  Confirm: <input type=\"password\" name=\"passcfm\" id=\"passcfm\" /><br />"
-    echo "  <input type=\"submit\" value=\"Submit\" />"
-    echo "</form>"
+    /usr/bin/cat <<EOF
+<form action="${URL}" method="POST">
+  <fieldset>
+    <legend>Reset Password</legend>
+    <input type="hidden" name="cmd" id="cmd" value="resetpass" />
+    <input type="hidden" name="key" id="key" value="${key}" />
+    <input type="hidden" name="user" id="user" value="${usr}" />
+    <p><label class="field" for="pass">Password:</label><input type="password" name="pass" id="pass" class="textbox-300" /></p>
+    <p><label class="field" for="passcfm">Confirm:</label><input type="password" name="passcfm" id="passcfm" class="textbox-300" /></p>
+    <input type="submit" value="Submit" />
+  </fieldset>
+</form>
+EOF
   else
     echo "<b>Error:</b> Reset code is not valid<br />"
   fi
@@ -92,7 +124,7 @@ function ConfirmReset () {
 # as generated by ConfirmReset
 # 1->user, 2->key, 3->pass, 4->cfm
 function ApplyNewPass () {
-  local usr="$1" key="$2" pass="$3" cfm="$4"
+  local usr=$(IsSaneUser "$1") key="$2" pass="$3" cfm="$4"
 
   if [ -z "${usr}" ]; then
     echo "<b>Error:</b> No User entered<br />"
@@ -125,40 +157,44 @@ function ApplyNewPass () {
 # Find Email Address from Contact Info
 # 1->user
 function GetAddress () {
-  local usr="$1"
-  awk -v search="^${usr}:" '$0 ~ search{split($0,a,":"); print a[2];}' "${USER_DB}"
+  local usr=$(IsSaneUser "$1")
+  /usr/bin/awk -v search="^${usr}:" '$0 ~ search{split($0,a,":"); print a[2];}' "${USER_DB}"
 }
 
 # Create form to request Reset Email
 # 1->user
 function UserResetForm () {
-  local user=$1
+  local user=$(IsSaneUser "$1")
 
-  echo "<h2>Reset Password</h2>"
-  echo "<form action=\"${URL}\" method=\"POST\">"
-  echo "  <input type=\"hidden\" name=\"cmd\" id=\"cmd\" value=\"setreset\" />"
-  echo "  User: <input type=\"text\" name=\"user\" id=\"user\" value=\"${user}\" /><br />"
-  echo "  <input type=\"submit\" value=\"Submit\" />"
-  echo "</form>"
+  /usr/bin/cat <<EOF
+<form action="${URL}" method="POST">
+  <fieldset>
+    <legend>Reset Password</legend>
+    <input type="hidden" name="cmd" id="cmd" value="setreset" />
+    <p><label class="field" for="user">User:</label><input type="text" name="user" id="user" class="textbox-300" value="${user}" /></p>
+    <input type="submit" value="Submit" />
+  </fieldset>
+</form>
+EOF
 }
 
 # Create Email, send it and then generate HTML status
 # 1->user
 function ApplyReset () {
-  local usr="$1"
+  local usr=$(IsSaneUser "$1")
   local key="${RND_CMD}"
 
   if [ -z "${usr}" ]; then
     echo "<b>Error:</b> No User entered<br />"
     UserResetForm ""
   else
-    grep -q "^${usr}:" /etc/passwd
+    /usr/bin/grep -q "^${usr}:" /etc/passwd
 
     if [ $? -eq 1 ]; then
       echo "<b>Error:</b> User does not exist<br />"
       UserResetForm ""
     else
-      grep -q "^${usr}:" "${USER_DB}"
+      /usr/bin/grep -q "^${usr}:" "${USER_DB}"
 
       if [ $? -eq 1 ]; then
         echo "<b>Error:</b> User has no contact info<br />"
@@ -179,12 +215,14 @@ Thank you
 EOF)
         local mail="subject:${subject}\nfrom:${EMAIL_FROM_ADDRESS}\n\n${message}"
 
-        echo -e "${mail}" | sendmail -F "${EMAIL_FROM_NAME}" -f "${EMAIL_FROM_ADDRESS}" "${address}"
+        echo -e "${mail}" | /usr/bin/sendmail -F "${EMAIL_FROM_NAME}" -f "${EMAIL_FROM_ADDRESS}" "${address}"
 
         if [ $? -eq 0 ]; then
           echo "<b>Success:</b> Email sent<br />"
           # Write key to database
-          echo "${key}:${usr}" >> "${RESET_DB}"
+          local now=$(date +%s)
+          local timeout=$(( ${now} + ${EXPIRATION} ))
+          echo "${key}:${usr}:$timeout" >> "${RESET_DB}"
         else
           echo "<b>Error:</b> Failed sending email<br />"
         fi
@@ -200,56 +238,50 @@ EOF)
 # Create form to change password
 # 1->user 2->old_pass
 function UserPassForm () {
-  local user=$1
+  local user=$(IsSaneUser "$1")
   local old_pass=$2
 
-  echo "<h2>Change Password</h2>"
-  echo "<form action=\"${URL}\" method=\"POST\">"
-  echo "  <input type=\"hidden\" name=\"cmd\" id=\"cmd\" value=\"setpass\" />"
-  echo "  User: <input type=\"text\" name=\"user\" id=\"user\" value=\"${user}\" /><br />"
-  echo "  Old Password: <input type=\"password\" name=\"oldpass\" id=\"oldpass\" value=\"${old_pass}\" /><br />"
-  echo "  New Password: <input type=\"password\" name=\"pass\" id=\"pass\" /><br />"
-  echo "  Confirm Password: <input type=\"password\" name=\"passcfm\" id=\"passcfm\" /><br />"
-  echo "  <input type=\"submit\" value=\"Submit\" />"
-  echo "</form>"
+  /usr/bin/cat <<EOF
+<form action="${URL}" method="POST">
+  <fieldset>
+    <legend>Change Password</legend>
+    <input type="hidden" name="cmd" id="cmd" value="setpass" />
+    <p><label class="field" for="user">User:</label> <input type="text" name="user" id="user" value="${user}" /></p>
+    <p><label class="field" for="oldpass">Old Password:</label><input type="password" name="oldpass" id="oldpass" value="${old_pass}" /></p>
+    <p><label class="field" for="pass">New Password:</label> <input type="password" name="pass" id="pass" /></p>
+    <p><label class="field" for="passcfm">Confirm Password:</label> <input type="password" name="passcfm" id="passcfm" /></p>
+    <input type="submit" value="Submit" />
+  </fieldset>
+</form>
+EOF
 }
 
 # Apply new password to user and generate HTML status
 # 1->user, 2->old pass, 3->new pass
 function SetPass () {
-  local user=$1 pass=$2 new=$3
+  local user=$(IsSaneUser "$1") pass=$2 new=$3
 
-  out=$(expect -c '
-    set timeout 10
-    spawn su -c passwd - '"${user}"'
-    expect "Password:" { send '\""${pass}\r\""' }
-    expect "current) UNIX password:" { send '"\"${pass}\r\""' }
-    expect "new UNIX password:" { send '"\"${new}\r\""' }
-    expect "new UNIX password:" { send '"\"${new}\r\""' }
-    expect {
-      "successfully" { exit 0 }
-      default { exit 1 }
-    }')
+  local out=$(echo -e "${pass}\n${pass}\n${new}\n${new}" | /usr/bin/su -c 'if /usr/bin/passwd; then echo "SUCCESS"; fi ' "${user}")
 
-  echo "${out}" | grep -q "successfully"
+  echo "${out}" | /usr/bin/grep -q "SUCCESS"
 
   if [ $? -eq 0 ]; then
     echo "<b>Success:</b> Password Changed<br />"
   else
-    echo "<b>Error:</b> Failed changing password<br />"
+    echo "<b>Error:</b> Failed changing password[${out}]<br />"
   fi
 }
 
 # Validate form data generated by UserPassForm
 # 1->user, 2->old, 3->newa, 4->newb
 function ApplyPass () {
-  local usr="$1"
+  local usr=$(IsSaneUser "$1")
   local old="$2"
   local newa="$3"
   local newb="$4"
 
   if [ -z "${usr}" ]; then
-    echo "<b>Error:</b> No User entered<br />"
+    echo "<b>Error:</b> Invalid User<br />"
     UserPassForm "" ""
   elif [ -z "${old}" ]; then
     echo "<b>Error:</b> No Old Password<br />"
@@ -261,7 +293,7 @@ function ApplyPass () {
     echo "<b>Error:</b> No New Password<br />"
     UserPassForm "${usr}" "${old}"
   else
-    grep -q "^${usr}:" /etc/passwd
+    /usr/bin/grep -q "^${usr}:" /etc/passwd
 
     if [ $? -eq 1 ]; then
       echo "<b>Error:</b> User does not exist<br />"
@@ -282,56 +314,46 @@ function ApplyPass () {
 # Create form to update Contact Info
 # 1->user, 2->email
 function UserContactForm () {
-  local user=$1
-  local email=$2
+  local user=$(IsSaneUser "$1") email=$(IsSaneEmail "$2")
 
-  echo "<h2>Change Contact Info</h2>"
-  echo "<form action=\"${URL}\" method=\"POST\">"
-  echo "  <input type=\"hidden\" name=\"cmd\" id=\"cmd\" value=\"setcontact\" />"
-  echo "  User: <input type=\"text\" name=\"user\" id=\"user\" value=\"${user}\" /><br />"
-  echo "  Password: <input type=\"password\" name=\"pass\" id=\"pass\"  /><br />"
-  echo "  Email: <input type=\"email\" name=\"email\" id=\"email\" value=\"${email}\" /><br />"
-  echo "  <input type=\"submit\" value=\"Submit\" />"
-  echo "</form>"
+  /usr/bin/cat <<EOF
+<form action="${URL}" method="POST">
+  <fieldset>
+    <legend>Change Contact Info</legend>
+    <input type="hidden" name="cmd" id="cmd" value="setcontact" />
+    <p><label class="field" for="user">User:</label><input type="text" name="user" id="user" value="${user}" /></p>
+    <p><label class="field" for="user">Password:</label><input type="password" name="pass" id="pass"  /></p>
+    <p><label class="field" for="user">Email:</label><input type="email" name="email" id="email" value="${email}" /></p>
+    <input type="submit" value="Submit" />
+  </fieldset>
+</form>
+EOF
 }
 
 # Apply new contact info and generate HTML status
 # 1->user, 2->password, 3->email
 function SetContact () {
-  local usr=$1 pass=$2 email=$3
+  local usr=$(IsSaneUser "$1") pass=$2 email=$(IsSaneEmail "$3")
 
   local f="/tmp/${usr}"
 
   local str="${usr}:${email}"
 
   # Touch file as user, requires correct password
-  local out=$(expect -c '
-    set timeout 10
-    spawn -noecho su -c "touch '"${f}"'" - '"${usr}"'
-    expect "Password:" { send '\""${pass}\r\""' }
-    expect eof
-    catch wait result
-    exit [lindex $result 3]')
+  local out=$(echo -e "${pass}\n" | /usr/bin/su -c "/usr/bin/touch \"${f}\"" - "${usr}")
 
   # if su worked, user/pass was valid
   if [ -e "${f}" ]; then
     # Remove old contact info and add new
-    TMP=$(mktemp /tmp/contact.XXXXXX)
-    sed "/^${usr}:/d" "${USER_DB}" > "${TMP}"
+    umask 026
+    TMP=$(/usr/bin/mktemp /tmp/contact.XXXXXX)
+    /usr/bin/sed "/^${usr}:/d" "${USER_DB}" > "${TMP}"
     echo "${usr}:${email}" >> "${TMP}"
     mv "${TMP}" "${USER_DB}"
-    chown http:http "${USER_DB}"
-    chmod 640 "${USER_DB}"
     echo "<b>Success:</b> Contact Info Updated<br />"
 
     # cleanup touched file
-    local out=$(expect -c '
-      set timeout 10
-      spawn -noecho su -c "rm '"${f}"'" - '"${usr}"'
-      expect "Password:" { send '\""${pass}\r\""' }
-      expect eof
-      catch wait result
-      exit [lindex $result 3]')
+    local out=$(echo -e "${pass}\n" | /usr/bin/su -c "/usr/bin/rm \"${f}\"" - "${usr}")
   else
     echo "<b>Error:</b> Failed to update DB, No file[${f}]<br />"
   fi
@@ -340,16 +362,16 @@ function SetContact () {
 # Validate form data generated by UserContactForm
 # 1->user, 2->pass, 3->email
 function ApplyContact () {
-  local usr="$1" pass="$2" email="$3"
+local usr=$(IsSaneUser "$1") pass="$2" email=$(IsSaneEmail "$3")
 
   if [ -z "${usr}" ]; then
-    echo "<b>Error:</b> No User entered<br />"
+    echo "<b>Error:</b> Invalid Username<br />"
     UserContactForm "" "${email}"
   elif [ -z "${pass}" ]; then
-    echo "<b>Error:</b> No Password<br />"
+    echo "<b>Error:</b> Invalid Password<br />"
     UserContactForm "${usr}" "${email}"
   elif [ -z "${email}" ]; then
-    echo "<b>Error:</b> No Email<br />"
+    echo "<b>Error:</b> Invalide Email<br />"
     UserContactForm "${usr}" ""
   else
     grep -q "^${usr}:" /etc/passwd
@@ -370,44 +392,72 @@ function ApplyContact () {
 # Switch on URL argument "cmd" to generate correct page
 # $1->cmd
 function Body () {
-  echo "<body>"
+  /usr/bin/cat <<EOF
+<body>
+  <h1>${TITLE}</h1>
+EOF
 
-  case "$1" in
+  cgi_getvars BOTH cmd
+  case "${cmd}" in
     resetpass)
+      cgi_getvars BOTH user
+      cgi_getvars BOTH key
+      cgi_getvars BOTH pass
+      cgi_getvars BOTH passcfm
       ApplyNewPass "${user}" "${key}" "${pass}" "${passcfm}"
       ;;
     cfmreset)
+      cgi_getvars BOTH user
+      cgi_getvars BOTH key
       ConfirmReset "${user}" "${key}"
       ;;
     setreset)
+      cgi_getvars BOTH user
       ApplyReset "${user}"
       ;;
     setpass)
+      cgi_getvars BOTH user
+      cgi_getvars BOTH oldpass
+      cgi_getvars BOTH pass
+      cgi_getvars BOTH passcfm
       ApplyPass "${user}" "${oldpass}" "${pass}" "${passcfm}"
       ;;
     setcontact)
+      cgi_getvars BOTH user
+      cgi_getvars BOTH pass
+      cgi_getvars BOTH email
       ApplyContact "${user}" "${pass}" "${email}"
       ;;
     resetform)
+      cgi_getvars BOTH user
       UserResetForm "${user}"
       ;;
     contactform)
+      cgi_getvars BOTH user
+      cgi_getvars BOTH email
       UserContactForm "${user}" "${email}"
       ;;
     passform)
+      cgi_getvars BOTH user
+      cgi_getvars BOTH oldpass
       UserPassForm "${user}" "${oldpass}"
       ;;
     *)
+      cgi_getvars BOTH user
+      cgi_getvars BOTH oldpass
       UserPassForm "${user}" "${oldpass}"
       ;;
   esac
 
-  echo "<br />"
-  echo "<a href=\"/cgi-bin/passwd.sh?cmd=passform\">Password</a>"
-  echo "<a href=\"/cgi-bin/passwd.sh?cmd=contactform\">Contact</a>"
-  echo "<a href=\"/cgi-bin/passwd.sh?cmd=resetform\">Reset Password</a>"
-
-  echo "</body>"
+  /usr/bin/cat <<EOF
+  <br />
+  <a href="${URL}?cmd=passform">Password</a>
+  <a href="${URL}?cmd=contactform">Contact</a>
+  <a href="${URL}?cmd=resetform">Reset Password</a>
+  <br />
+  <p>Contact <a href="mailto:${EMAIL_FROM_ADDRESS}">${EMAIL_FROM_NAME}</a> if you have any issues</p>
+</body>
+EOF
 }
 
 # START bash_cgi
@@ -501,18 +551,140 @@ function cgi_getvars()
   return
 }
 
-cgi_getvars BOTH ALL
+#cgi_getvars BOTH ALL
 # END of bash_cgi
+
+################
+# Sanitization #
+################
+# Checks if username is a sane username
+# 1->user
+function IsSaneUser () {
+  local user=$(echo "$1" | /usr/bin/grep "^[0-9A-Za-z-]\+$")
+  if [ ! -z "${user}" ]; then
+    local count = 0
+    while [ "x${BLACKLIST[count]}" != "x" ]
+    do
+      if [ "${user}" == "${BLACKLIST[count]}" ]; then
+        return
+      fi
+      count=$(( ${count} + 1 ))
+    done
+  fi
+  echo "${user}"
+}
+
+# Checks if email is sane
+# 1->email
+function IsSaneEmail () {
+  echo "$1" | /usr/bin/grep -E -o "\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,6}\b"
+}
+
+#################
+# CLI Functions #
+#################
+function PrintUsage () {
+  /usr/bin/cat <<EOF
+usage: passwd.sh [OPTION]
+
+  -h | --help  Print this output
+  -c | --cron  Trigger cleanup of expired entries
+
+This application is a CGI script that generates a Unix account password
+manager. The script should be executed as a non-root user and the user
+should be given sudo access to /usr/bin/chpasswd.
+
+To allow password reset requests to expire, this script should be run as
+a cron job with the -c flag.
+
+EOF
+}
+
+function CronMode () {
+  umask 026
+  local file=$(/usr/bin/mktemp /tmp/reset.XXXXXX)
+
+  /usr/bin/awk -v now=$(/usr/bin/date +%s) '{
+    split($0,a,":");
+    if (a[3] != "") {
+      if (a[3] > now) {
+        print $0;
+      }
+    }
+  }' "${RESET_DB}" > "${file}"
+
+  cp --no-preserve=mode,ownership "${file}" "${RESET_DB}"
+  rm "${file}"
+}
+
 
 ###################
 # HTML Generation #
 ###################
-echo Content-type: text/html
-echo ""
+function Header() {
+  /usr/bin/cat <<EOF
+<head>
+  <title>${TITLE}</title>
+  <style>
+    fieldset {
+      width: 500px;
+    }
+    legend {
+      font-size: 20px;
+    }
+    label.field {
+      text-align: right;
+      width: 200px;
+      float: left;
+      font-weight: bold;
+    }
+    label.textbox-300 {
+      width: 300px;
+      float: left;
+    }
+    fieldset p {
+      clear: bloth;
+      padding: 5px;
+    }
+  </style>
+</head>
+EOF
+}
 
-echo "<!DOCTYPE html>"
-echo "<html>"
-Header
-Body "${cmd}"
-echo "</html>"
+# Cron mode, trigger cleanup of reset requests
+CRON_MODE=0
+
+# Print usage and quit
+HELP_MODE=0
+
+while [[ $# > 0 ]]
+do
+  case $1 in
+    -c|--cron)
+      CRON_MODE=1
+      ;;
+    -h|--help)
+      HELP_MODE=1
+      ;;
+    *)
+      ;;
+  esac
+  shift # next arg
+done
+
+if [ ${HELP_MODE} -eq 1 ]; then
+  PrintUsage
+elif [ ${CRON_MODE} -eq 1 ]; then
+  CronMode
+else
+  /usr/bin/cat <<EOF
+Content-type: text/html
+
+<!DOCTYPE html>
+<html>
+$(Header)
+$(Body)
+</html>
+EOF
+fi
 
