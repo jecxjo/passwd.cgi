@@ -67,6 +67,42 @@ RND_CMD=$(/usr/bin/dd if=/dev/random bs=1 count=32 2>/dev/null | \
 
 BLACKLIST=(root http nobody)
 
+#########
+# Mutex #
+#########
+function LockResetMutex () {
+  local count=5
+  while [[ ${count} > 0 ]]
+  do
+    if mkdir /tmp/passwd.sh.reset.lock; then
+      echo "LOCKED"
+      return
+    fi
+    count=$(( count - 1 ))
+    sleep 1
+  done
+}
+
+function UnlockResetMutex () {
+  rm -rf /tmp/passwd.sh.reset.lock
+}
+
+function LockUserMutex () {
+  local count=5
+  while [[ ${count} > 0 ]]
+  do
+    if mkdir /tmp/passwd.sh.user.lock; then
+      echo "LOCKED"
+      return
+    fi
+    count=$(( count - 1 ))
+    sleep 1
+  done
+}
+
+function UnlockUserMutex () {
+  rm -rf /tmp/passwd.sh.user.lock
+}
 
 #################
 # Confirm Reset #
@@ -76,18 +112,25 @@ BLACKLIST=(root http nobody)
 # 1->user, 2->pass
 function ResetPass () {
   local usr=$(IsSaneUser "$1") pass="$2"
-  # write new user:pass to system
-  echo "${usr}:${pass}" | /usr/bin/sudo /usr/bin/chpasswd
 
-  # Check if password change was successful
-  if [ $? -eq 0 ]; then
-    echo "<b>Success:</b> Password changed successfully<br />"
+  if [ "$(LockResetMutex)" == "LOCKED" ]; then
+    # write new user:pass to system
+    echo "${usr}:${pass}" | /usr/bin/sudo /usr/bin/chpasswd
 
-    # Remove all instances of reset keys
-    umask 026
-    local tmp=$(mktemp /tmp/reset.XXXXXX)
-    sed "/:${usr}:/d" "${RESET_DB}" > "${tmp}"
-    mv "${tmp}" "${RESET_DB}"
+    # Check if password change was successful
+    if [ $? -eq 0 ]; then
+      echo "<b>Success:</b> Password changed successfully<br />"
+
+      # Remove all instances of reset keys
+      umask 026
+      local tmp=$(mktemp /tmp/reset.XXXXXX)
+      sed "/:${usr}:/d" "${RESET_DB}" > "${tmp}"
+      cp --no-preserve=mode,ownership "${tmp}" "${RESET_DB}"
+      rm "${tmp}"
+    else
+      echo "<b>Error:</b> Failed setting password<br />"
+    fi
+    UnlockResetMutex
   else
     echo "<b>Error:</b> Failed setting password<br />"
   fi
@@ -200,11 +243,12 @@ function ApplyReset () {
         echo "<b>Error:</b> User has no contact info<br />"
         UserResetForm ""
       else
-        # Create Email message
-        local subject="Password Reset"
-        local link="${URL}?cmd=cfmreset&user=${usr}&key=${key}"
-        local address=$(GetAddress "${usr}")
-        local message=$(cat <<EOF
+        if [ "$(LockResetMutex)" == "LOCKED" ]; then
+          # Create Email message
+          local subject="Password Reset"
+          local link="${URL}?cmd=cfmreset&user=${usr}&key=${key}"
+          local address=$(GetAddress "${usr}")
+          local message=$(cat <<EOF
 A request was made to reset the password for ${usr}. If this was in error
 please ignore this message. Otherwise follow the link to reset your account
 password:
@@ -213,18 +257,22 @@ ${link}
 
 Thank you
 EOF)
-        local mail="subject:${subject}\nfrom:${EMAIL_FROM_ADDRESS}\n\n${message}"
+          local mail="subject:${subject}\nfrom:${EMAIL_FROM_ADDRESS}\n\n${message}"
 
-        echo -e "${mail}" | /usr/bin/sendmail -F "${EMAIL_FROM_NAME}" -f "${EMAIL_FROM_ADDRESS}" "${address}"
+          echo -e "${mail}" | /usr/bin/sendmail -F "${EMAIL_FROM_NAME}" -f "${EMAIL_FROM_ADDRESS}" "${address}"
 
-        if [ $? -eq 0 ]; then
-          echo "<b>Success:</b> Email sent<br />"
-          # Write key to database
-          local now=$(date +%s)
-          local timeout=$(( ${now} + ${EXPIRATION} ))
-          echo "${key}:${usr}:$timeout" >> "${RESET_DB}"
+          if [ $? -eq 0 ]; then
+            echo "<b>Success:</b> Email sent<br />"
+            # Write key to database
+            local now=$(date +%s)
+            local timeout=$(( ${now} + ${EXPIRATION} ))
+            echo "${key}:${usr}:$timeout" >> "${RESET_DB}"
+          else
+            echo "<b>Error:</b> Failed sending email<br />"
+          fi
+          UnlockResetMutex
         else
-          echo "<b>Error:</b> Failed sending email<br />"
+          echo "<b>Error:</b> System in use, please try again<br />"
         fi
       fi
     fi
@@ -335,27 +383,33 @@ EOF
 function SetContact () {
   local usr=$(IsSaneUser "$1") pass=$2 email=$(IsSaneEmail "$3")
 
-  local f="/tmp/${usr}"
+  if [ "$(LockUserMutex)" == "LOCKED" ]; then
+    local f="/tmp/${usr}"
 
-  local str="${usr}:${email}"
+    local str="${usr}:${email}"
 
-  # Touch file as user, requires correct password
-  local out=$(echo -e "${pass}\n" | /usr/bin/su -c "/usr/bin/touch \"${f}\"" - "${usr}")
+    # Touch file as user, requires correct password
+    local out=$(echo -e "${pass}\n" | /usr/bin/su -c "/usr/bin/touch \"${f}\"" - "${usr}")
 
-  # if su worked, user/pass was valid
-  if [ -e "${f}" ]; then
-    # Remove old contact info and add new
-    umask 026
-    TMP=$(/usr/bin/mktemp /tmp/contact.XXXXXX)
-    /usr/bin/sed "/^${usr}:/d" "${USER_DB}" > "${TMP}"
-    echo "${usr}:${email}" >> "${TMP}"
-    mv "${TMP}" "${USER_DB}"
-    echo "<b>Success:</b> Contact Info Updated<br />"
+    # if su worked, user/pass was valid
+    if [ -e "${f}" ]; then
+      # Remove old contact info and add new
+      umask 026
+      local tmp=$(/usr/bin/mktemp /tmp/contact.XXXXXX)
+      /usr/bin/sed "/^${usr}:/d" "${USER_DB}" > "${tmp}"
+      echo "${usr}:${email}" >> "${tmp}"
+      cp --no-preserve=mode,ownership "${tmp}" "${RESET_DB}"
+      rm "${tmp}"
+      echo "<b>Success:</b> Contact Info Updated<br />"
 
-    # cleanup touched file
-    local out=$(echo -e "${pass}\n" | /usr/bin/su -c "/usr/bin/rm \"${f}\"" - "${usr}")
+      # cleanup touched file
+      local out=$(echo -e "${pass}\n" | /usr/bin/su -c "/usr/bin/rm \"${f}\"" - "${usr}")
+    else
+      echo "<b>Error:</b> Failed to update DB, No file[${f}]<br />"
+    fi
+    UnlockUserMutex
   else
-    echo "<b>Error:</b> Failed to update DB, No file[${f}]<br />"
+    echo "<b>Error:</b> System in use, please try again<br />"
   fi
 }
 
@@ -601,20 +655,23 @@ EOF
 }
 
 function CronMode () {
-  umask 026
-  local file=$(/usr/bin/mktemp /tmp/reset.XXXXXX)
+  if [ "$(LockResetMutex)" == "LOCKED" ]; then
+    umask 026
+    local file=$(/usr/bin/mktemp /tmp/reset.XXXXXX)
 
-  /usr/bin/awk -v now=$(/usr/bin/date +%s) '{
-    split($0,a,":");
-    if (a[3] != "") {
-      if (a[3] > now) {
-        print $0;
+    /usr/bin/awk -v now=$(/usr/bin/date +%s) '{
+      split($0,a,":");
+      if (a[3] != "") {
+        if (a[3] > now) {
+          print $0;
+        }
       }
-    }
-  }' "${RESET_DB}" > "${file}"
+    }' "${RESET_DB}" > "${file}"
 
-  cp --no-preserve=mode,ownership "${file}" "${RESET_DB}"
-  rm "${file}"
+    cp --no-preserve=mode,ownership "${file}" "${RESET_DB}"
+    rm "${file}"
+    UnlockResetMutex
+  fi
 }
 
 

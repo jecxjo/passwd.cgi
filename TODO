@@ -4,16 +4,16 @@ TODO
 0004 Sanitize password
 0005 Change in contact info should send a validation email
 0009 Add setup option to initialize system
-0014 Add mutex to allow multiple hits at the same time
 
 Completed:
--0013 Replace all expect code with piped passwords
--0012 Restrict POST/GET variables to the ones required based on 'cmd'
--0011 Clean up security issues in script
--0010 Add blacklist for users
--0008 Add License to source file
--0007 Add support for time limits on reset requests, cron execution cleanup
--0006 Site should have header and footer
--0003 Change default directory to match file name
--0002 Sanitize email address in contact
--0001 Sanitize user names
+0014 Add mutex to allow multiple hits at the same time
+0013 Replace all expect code with piped passwords
+0012 Restrict POST/GET variables to the ones required based on 'cmd'
+0011 Clean up security issues in script
+0010 Add blacklist for users
+0008 Add License to source file
+0007 Add support for time limits on reset requests, cron execution cleanup
+0006 Site should have header and footer
+0003 Change default directory to match file name
+0002 Sanitize email address in contact
+0001 Sanitize user names
