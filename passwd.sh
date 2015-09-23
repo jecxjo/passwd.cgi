@@ -39,9 +39,10 @@
 #        AUTHOR: jecxjo (jeff@commentedcode.org)
 #  ORGANIZATION:
 #       CREATED: 09/20/15 13:28
-#      REVISION: 0.0.4
+#      REVISION: 0.0.5
 #
-#     CHANGELOG: 0.0.4 - Security holes and cleanup
+#     CHANGELOG: 0.0.5 - Cron support and reset expirations
+#                0.0.4 - Security holes and cleanup
 #                0.0.3 - Moved bash_cgi code to file
 #                0.0.2 - Clean up
 #                0.0.1 - Initial version
