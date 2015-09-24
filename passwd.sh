@@ -40,9 +40,10 @@
 #        AUTHOR: jecxjo (jeff@commentedcode.org)
 #  ORGANIZATION:
 #       CREATED: 09/20/15 13:28
-#      REVISION: 0.0.6
+#      REVISION: 0.1.0
 #
-#     CHANGELOG: 0.0.6 - Confirmation Emails for contacts
+#     CHANGELOG: 0.1.0 - Code cleanup, comments and install script
+#                0.0.6 - Confirmation Emails for contacts
 #                0.0.5 - Cron support and reset expirations
 #                0.0.4 - Security holes and cleanup
 #                0.0.3 - Moved bash_cgi code to file
@@ -51,6 +52,10 @@
 #
 #===============================================================================
 
+# Acknowledgements
+# bash_cgi
+# Created by Philippe Kehl
+# http://oinkzwurgl.org/bash_cgi
 
 # Setup
 # Modify these variables and then run the script as root
