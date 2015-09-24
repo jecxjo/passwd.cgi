@@ -1,8 +1,6 @@
 TODO
 ----
-
 0004 Sanitize password
-0009 Add setup option to initialize system
 
 Completed:
 0015 Labeled errors for better debug
@@ -11,6 +9,7 @@ Completed:
 0012 Restrict POST/GET variables to the ones required based on 'cmd'
 0011 Clean up security issues in script
 0010 Add blacklist for users
+0009 Add setup option to initialize system
 0008 Add License to source file
 0007 Add support for time limits on reset requests, cron execution cleanup
 0006 Site should have header and footer
