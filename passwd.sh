@@ -60,12 +60,9 @@ USER_DB="/var/lib/passwd.sh/users.db"
 RESET_DB="/var/lib/passwd.sh/reset.db"
 CONFIRM_DB="/var/lib/passwd.sh/confirm.db"
 EXPIRATION=3600 # 1 hour in seconds
-RND_CMD=$(/usr/bin/dd if=/dev/random bs=1 count=32 2>/dev/null | \
-          /usr/bin/base64 | \
-          /usr/bin/sed 's|+||g' | \
-          /usr/bin/sed 's|/||g' | \
-          /usr/bin/sed 's|=||g' | \
-          /usr/bin/sed 's| ||g')
+RND_CMD=$(dd if=/dev/random bs=1 count=32 2>/dev/null |
+          base64 |
+          tr -d '+/= ')
 
 BLACKLIST=(root http nobody)
 
@@ -132,16 +129,16 @@ function UnlockUserMutex () {
 function ResetPass () {
   local user=$(IsSaneUser "$1") pass="$2"
 
-  if [ "$(LockResetMutex)" == "LOCKED" ]; then
+  if [[ "$(LockResetMutex)" == "LOCKED" ]]; then
     # write new user:pass to system
-    echo "${user}:${pass}" | /usr/bin/sudo /usr/bin/chpasswd
+    builtin echo -E "${user}:${pass}" | sudo chpasswd
 
     # Check if password change was successful
-    if [ $? -eq 0 ]; then
+    if [[ $? -eq 0 ]]; then
       echo "<b>Success:</b> Password changed successfully<br />"
 
       # Remove all instances of reset keys
-      umask 026
+      builtin umask 026
       local tmp=$(mktemp /tmp/reset.XXXXXX)
       sed "/:${user}:/d" "${RESET_DB}" > "${tmp}"
       cp --no-preserve=mode,ownership "${tmp}" "${RESET_DB}"
@@ -159,12 +156,12 @@ function ResetPass () {
 # 1->user, 2->key
 function ConfirmReset () {
   local user=$(IsSaneUser "$1") key="$2"
-  /usr/bin/grep -q "^${key}:${user}" "${RESET_DB}"
+  grep -q "^${key}:${user}" "${RESET_DB}"
 
   # Check if reset code is valid
-  if [ $? -eq 0 ]; then
+  if [[ $? -eq 0 ]]; then
     # Create form to enter new password
-    /usr/bin/cat <<EOF
+    cat << EOF
 <form action="${URL}" method="POST">
   <fieldset>
     <legend>Reset Password</legend>
@@ -188,27 +185,21 @@ EOF
 function ApplyNewPass () {
   local user=$(IsSaneUser "$1") key="$2" pass="$3" cfm="$4"
 
-  if [ -z "${user}" ]; then
-    echo "<b>Error 04:</b> No User entered<br />"
-  elif [ -z "${key}" ]; then
+  if [[ -z "${user}" ]]; then
+    echo "<b>Error 04:</b> Invalid User<br />"
+  elif [[ -z "${key}" ]]; then
     echo "<b>Error 05:</b> No Key<br />"
-  elif [ -z "${pass}" ]; then
+  elif [[ -z "${pass}" ]]; then
     echo "<b>Error 06:</b> No New Password<br />"
     ConfirmReset "${user}" "${key}"
-  elif [ -z "${cfm}" ]; then
+  elif [[ -z "${cfm}" ]]; then
     echo "<b>Error 07:</b> No New Password<br />"
     ConfirmReset "${user}" "${key}"
+  elif [[ "${pass}" != "${cfm}" ]]; then
+    echo "<b>Error 09:</b> New Passwords don't match<br />"
+    ConfirmReset "${user}" "${key}"
   else
-    /usr/bin/grep -q "^${user}:" /etc/passwd
-
-    if [ $? -eq 1 ]; then
-      echo "<b>Error 08:</b> User does not exist<br />"
-    elif [ "${pass}" != "${cfm}" ]; then
-      echo "<b>Error 09:</b> New Passwords don't match<br />"
-      ConfirmReset "${user}" "${key}"
-    else
-      ResetPass "${user}" "${pass}"
-    fi
+    ResetPass "${user}" "${pass}"
   fi
 }
 
@@ -220,7 +211,7 @@ function ApplyNewPass () {
 # 1->user
 function GetAddress () {
   local user=$(IsSaneUser "$1")
-  /usr/bin/awk -v user="^${user}:" 'BEGIN { FS = ":" } { if ( $0 ~ user ){ print $2; exit 0; }}' "${USER_DB}"
+  awk -v user="^${user}:" 'BEGIN { FS = ":" } { if ( $0 ~ user ){ print $2; exit 0; }}' "${USER_DB}"
 }
 
 # Create form to request Reset Email
@@ -228,7 +219,7 @@ function GetAddress () {
 function UserResetForm () {
   local user=$(IsSaneUser "$1")
 
-  /usr/bin/cat <<EOF
+  cat << EOF
 <form action="${URL}" method="POST">
   <fieldset>
     <legend>Reset Password</legend>
@@ -246,29 +237,25 @@ function ApplyReset () {
   local user=$(IsSaneUser "$1")
   local key="${RND_CMD}"
 
-  if [ -z "${user}" ]; then
-    echo "<b>Error 10:</b> No User entered<br />"
+  if [[ -z "${user}" ]]; then
+    echo "<b>Error 10:</b> Invalid User<br />"
     UserResetForm ""
   else
-    /usr/bin/grep -q "^${user}:" /etc/passwd
+    grep -q "^${user}:" "${USER_DB}"
 
-    if [ $? -eq 1 ]; then
-      echo "<b>Error 11:</b> User does not exist<br />"
+    if [[ $? -eq 1 ]]; then
+      echo "<b>Error 12:</b> User has no contact info<br />"
       UserResetForm ""
     else
-      /usr/bin/grep -q "^${user}:" "${USER_DB}"
+      if [[ "$(LockResetMutex)" == "LOCKED" ]]; then
+        # Create Email message
+        local subject="Password Reset"
+        local link="${URL}?cmd=cfmreset&user=${user}&key=${key}"
+        local address=$(GetAddress "${user}")
+        local message=$(cat << EOF
+Dear ${user},
 
-      if [ $? -eq 1 ]; then
-        echo "<b>Error 12:</b> User has no contact info<br />"
-        UserResetForm ""
-      else
-        if [ "$(LockResetMutex)" == "LOCKED" ]; then
-          # Create Email message
-          local subject="Password Reset"
-          local link="${URL}?cmd=cfmreset&user=${user}&key=${key}"
-          local address=$(GetAddress "${user}")
-          local message=$(/usr/bin/cat <<EOF
-A request was made to reset the password for ${user}. If this was in error
+A request was made to reset the your password. If this was in error
 please ignore this message. Otherwise follow the link to reset your account
 password:
 
@@ -276,23 +263,22 @@ ${link}
 
 Thank you
 EOF)
-          local mail="subject:${subject}\nfrom:${EMAIL_FROM_ADDRESS}\n\n${message}"
+        local mail="subject:${subject}\nfrom:${EMAIL_FROM_ADDRESS}\n\n${message}"
 
-          echo -e "${mail}" | /usr/bin/sendmail -F "${EMAIL_FROM_NAME}" -f "${EMAIL_FROM_ADDRESS}" "${address}"
+        builtin echo -e "${mail}" | sendmail -F "${EMAIL_FROM_NAME}" -f "${EMAIL_FROM_ADDRESS}" "${address}"
 
-          if [ $? -eq 0 ]; then
-            echo "<b>Success:</b> Email sent<br />"
-            # Write key to database
-            local now=$(/usr/bin/date +%s)
-            local timeout=$(( ${now} + ${EXPIRATION} ))
-            echo "${key}:${user}:$timeout" >> "${RESET_DB}"
-          else
-            echo "<b>Error 13:</b> Failed sending email<br />"
-          fi
-          UnlockResetMutex
+        if [[ $? -eq 0 ]]; then
+          echo "<b>Success:</b> Email sent<br />"
+          # Write key to database
+          local now=$(date +%s)
+          local timeout=$(( ${now} + ${EXPIRATION} ))
+          echo "${key}:${user}:$timeout" >> "${RESET_DB}"
         else
-          echo "<b>Error 14:</b> System in use, please try again<br />"
+          echo "<b>Error 13:</b> Failed sending email<br />"
         fi
+        UnlockResetMutex
+      else
+        echo "<b>Error 14:</b> System in use, please try again<br />"
       fi
     fi
   fi
@@ -308,7 +294,7 @@ function UserPassForm () {
   local user=$(IsSaneUser "$1")
   local old_pass=$2
 
-  /usr/bin/cat <<EOF
+  cat << EOF
 <form action="${URL}" method="POST">
   <fieldset>
     <legend>Change Password</legend>
@@ -328,11 +314,7 @@ EOF
 function SetPass () {
   local user=$(IsSaneUser "$1") pass=$2 new=$3
 
-  local out=$(echo -e "${pass}\n${pass}\n${new}\n${new}" | /usr/bin/su -c 'if /usr/bin/passwd; then echo "SUCCESS"; fi ' "${user}")
-
-  echo "${out}" | /usr/bin/grep -q "SUCCESS"
-
-  if [ $? -eq 0 ]; then
+  if out=$(echo -e "${pass}\n${pass}\n${new}\n${new}" | su -c 'passwd' "${user}"); then
     echo "<b>Success:</b> Password Changed<br />"
   else
     echo "<b>Error 15:</b> Failed changing password[${out}]<br />"
@@ -347,30 +329,23 @@ function ApplyPass () {
   local newa="$3"
   local newb="$4"
 
-  if [ -z "${user}" ]; then
+  if [[ -z "${user}" ]]; then
     echo "<b>Error 16:</b> Invalid User<br />"
     UserPassForm "" ""
-  elif [ -z "${old}" ]; then
+  elif [[ -z "${old}" ]]; then
     echo "<b>Error 17:</b> No Old Password<br />"
     UserPassForm "${user}" ""
-  elif [ -z "${newa}" ]; then
+  elif [[ -z "${newa}" ]]; then
     echo "<b>Error 18:</b> No New Password<br />"
     UserPassForm "${user}" "${old}"
-  elif [ -z "${newb}" ]; then
+  elif [[ -z "${newb}" ]]; then
     echo "<b>Error 19:</b> No New Password<br />"
     UserPassForm "${user}" "${old}"
+  elif [[ "${newa}" != "${newb}" ]]; then
+    echo "<b>Error 21:</b> New Passwords don't match<br />"
+    UserPassForm "${user}" "${old}"
   else
-    /usr/bin/grep -q "^${user}:" /etc/passwd
-
-    if [ $? -eq 1 ]; then
-      echo "<b>Error 20:</b> User does not exist<br />"
-      UserPassForm "" ""
-    elif [ "${newa}" != "${newb}" ]; then
-      echo "<b>Error 21:</b> New Passwords don't match<br />"
-      UserPassForm "${user}" "${old}"
-    else
-      SetPass "${user}" "${old}" "${newa}"
-    fi
+    SetPass "${user}" "${old}" "${newa}"
   fi
 }
 
@@ -383,7 +358,7 @@ function ApplyPass () {
 function UserContactForm () {
   local user=$(IsSaneUser "$1") email=$(IsSaneEmail "$2")
 
-  /usr/bin/cat <<EOF
+  cat << EOF
 <form action="${URL}" method="POST">
   <fieldset>
     <legend>Change Contact Info</legend>
@@ -402,22 +377,22 @@ EOF
 function SetContact () {
   local user=$(IsSaneUser "$1") key="$2"
 
-  if [ "$(LockConfirmMutext)" == "LOCKED" ]; then
-    if [ "$(LockUserMutex)" == "LOCKED" ]; then
+  if [[ "$(LockConfirmMutext)" == "LOCKED" ]]; then
+    if [[ "$(LockUserMutex)" == "LOCKED" ]]; then
 
-      /usr/bin/grep -q "^${key}:${user}:" "${CONFIRM_DB}"
+      grep -q "^${key}:${user}:" "${CONFIRM_DB}"
 
-      if [ $? -eq 0 ]; then
+      if [[ $? -eq 0 ]]; then
         # Copy and remove entry from Confirm
         local email=$(awk -v ku="${key}:${user}" 'BEGIN { FS = ":" } { if ( $0 ~ ku ){ print $3; exit 0; } }' "${CONFIRM_DB}")
 
         # Remove entry from Confirm
-        local tmp=$(/usr/bin/mktemp /tmp/confirm.XXXXXX)
-        /usr/bin/sed "/^${key}:${user}:/d" "${CONFIRM_DB}" > "${tmp}"
+        local tmp=$(mktemp /tmp/confirm.XXXXXX)
+        sed "/^${key}:${user}:/d" "${CONFIRM_DB}" > "${tmp}"
         cp --no-preserve=mode,ownership "${tmp}" "${CONFIRM_DB}"
 
         # Remove old entry from Contact and insert new
-        /usr/bin/sed "/^${user}:/d" "${USER_DB}" > "${tmp}"
+        sed "/^${user}:/d" "${USER_DB}" > "${tmp}"
         echo "${user}:${email}" >> "${tmp}"
 
         # Move back
@@ -447,13 +422,7 @@ function ApplyContact () {
   if [ -z "${user}" ]; then
     echo "<b>Error 25:</b> Invalid Username<br />"
   else
-    /usr/bin/grep -q "^${user}:" /etc/passwd
-
-    if [ $? -eq 1 ]; then
-      echo "<b>Error 26:</b> User does not exist<br />"
-    else
-      SetContact "${user}" "${key}"
-    fi
+    SetContact "${user}" "${key}"
   fi
 }
 
@@ -464,30 +433,31 @@ function SendConfirm () {
 
   local f="/tmp/${user}"
   # Touch file as user, requires correct password
-  local out=$(echo -e "${pass}\n" | /usr/bin/su -c "/usr/bin/touch \"${f}\"" - "${user}")
+  local out=$(echo -e "${pass}\n" | su -c "touch \"${f}\"" - "${user}")
 
   if [ -e "${f}" ]; then
-    local out=$(echo -e "${pass}\n" | /usr/bin/su -c "rm \"${f}\"" - "${user}")
+    local out=$(echo -e "${pass}\n" | su -c "rm \"${f}\"" - "${user}")
     if [ "$(LockConfirmMutext)" == "LOCKED" ]; then
       # Create email
       local key=$"${RND_CMD}"
       local subject="Contact Confirmation"
       local link="${URL}?cmd=cfmcontact&user=${user}&key=${key}"
-      local message=$(/usr/bin/cat <<EOF
-A request was made to change the contact info for "${user}". If this was
-in error please ignore this message. Otherwise follow the link to confirm
-this address.
+      local message=$(cat << EOF
+Dear ${user},
+
+A request was made to change your contact info. If this was in error please
+ignore this message. Otherwise follow the link to confirm this address.
 
 ${link}
 
 Thank you
 EOF)
       local mail="subject:${subject}\nfrom:${EMAIL_FROM_ADDRESS}\n\n${message}"
-      echo -e "${mail}" | /usr/bin/sendmail -F "${EMAIL_FROM_NAME}" -f "${EMAIL_FROM_ADDRESS}" "${email}"
+      builtin echo -e "${mail}" | sendmail -F "${EMAIL_FROM_NAME}" -f "${EMAIL_FROM_ADDRESS}" "${email}"
 
       if [ $? -eq 0 ]; then
         # write key to database
-        local now=$(/usr/bin/date +%s)
+        local now=$(date +%s)
         local timeout=$(( ${now} + ${EXPIRATION} ))
         echo "${key}:${user}:${email}:${timeout}" >> "${CONFIRM_DB}"
         echo "<b>Success:</b> Confirmation email sent<br />"
@@ -518,14 +488,7 @@ function SendConfirmContact () {
     echo "<b>Error 32:</b> Invalide Email<br />"
     UserContactForm "${user}" ""
   else
-    /usr/bin/grep -q "^${user}:" /etc/passwd
-
-    if [ $? -eq 1 ]; then
-      echo "<b>Error 33:</b> User does not exist<br />"
-      UserContactForm "" "${email}"
-    else
-      SendConfirm "${user}" "${pass}" "${email}"
-    fi
+    SendConfirm "${user}" "${pass}" "${email}"
   fi
 }
 
@@ -536,7 +499,7 @@ function SendConfirmContact () {
 # Switch on URL argument "cmd" to generate correct page
 # $1->cmd
 function Body () {
-  /usr/bin/cat <<EOF
+  cat << EOF
 <body>
   <h1>${TITLE}</h1>
 EOF
@@ -598,7 +561,7 @@ EOF
       ;;
   esac
 
-  /usr/bin/cat <<EOF
+  cat << EOF
   <br />
   <a href="${URL}?cmd=passform">Password</a>
   <a href="${URL}?cmd=contactform">Contact</a>
@@ -709,7 +672,7 @@ function cgi_getvars()
 # Checks if username is a sane username
 # 1->user
 function IsSaneUser () {
-  local user=$(echo "$1" | /usr/bin/grep "^[0-9A-Za-z-]\+$")
+  local user=$(echo "$1" | grep "^[0-9A-Za-z-]\+$")
   if [ ! -z "${user}" ]; then
     local count = 0
     while [ "x${BLACKLIST[count]}" != "x" ]
@@ -720,20 +683,25 @@ function IsSaneUser () {
       count=$(( ${count} + 1 ))
     done
   fi
-  echo "${user}"
+
+  grep -q "^${user}:" /etc/passwd
+
+  if [[ $? -eq 0 ]]; then
+    echo "${user}"
+  fi
 }
 
 # Checks if email is sane
 # 1->email
 function IsSaneEmail () {
-  echo "$1" | /usr/bin/grep -E -o "\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,6}\b"
+  echo "$1" | grep -E -o "\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,6}\b"
 }
 
 #################
 # CLI Functions #
 #################
 function PrintUsage () {
-  /usr/bin/cat <<EOF
+  cat << EOF
 usage: passwd.sh [OPTION]
 
   -h | --help  Print this output
@@ -750,11 +718,11 @@ EOF
 }
 
 function CronMode () {
-  if [ "$(LockResetMutex)" == "LOCKED" ]; then
-    umask 026
-    local file=$(/usr/bin/mktemp /tmp/reset.XXXXXX)
+  if [[ "$(LockResetMutex)" == "LOCKED" ]]; then
+    builtin umask 026
+    local file=$(mktemp /tmp/reset.XXXXXX)
 
-    /usr/bin/awk -v now=$(/usr/bin/date +%s) '
+    awk -v now=$(date +%s) '
       BEGIN { FS = ":" }
       {
         if ( $3 != "" ) {
@@ -769,11 +737,11 @@ function CronMode () {
     UnlockResetMutex
   fi
 
-  if [ "$(LockConfirmMutext)" == "LOCKED" ]; then
-    umask 026
-    local file=$(/usr/bin/mktemp /tmp/confirm.XXXXXX)
+  if [[ "$(LockConfirmMutext)" == "LOCKED" ]]; then
+    builtin umask 026
+    local file=$(mktemp /tmp/confirm.XXXXXX)
 
-    /usr/bin/awk -v now=$(/usr/bin/date +%s) '
+    awk -v now=$(date +%s) '
       BEGIN { FS = ":" }
       {
         if ( $4 != "" ) {
@@ -793,7 +761,7 @@ function CronMode () {
 # HTML Generation #
 ###################
 function Header() {
-  /usr/bin/cat <<EOF
+  cat << EOF
 <head>
   <title>${TITLE}</title>
   <style>
@@ -843,12 +811,12 @@ do
   shift # next arg
 done
 
-if [ ${HELP_MODE} -eq 1 ]; then
+if [[ ${HELP_MODE} -eq 1 ]]; then
   PrintUsage
-elif [ ${CRON_MODE} -eq 1 ]; then
+elif [[ ${CRON_MODE} -eq 1 ]]; then
   CronMode
 else
-  /usr/bin/cat <<EOF
+  cat << EOF
 Content-type: text/html
 
 <!DOCTYPE html>
